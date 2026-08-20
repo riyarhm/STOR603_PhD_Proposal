@@ -1,1 +1,1 @@
-# STOR603--PhD-Proposal
+# STOR603_PhD_Proposal
