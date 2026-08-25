@@ -1,0 +1,1964 @@
+Pattern C Scenario 2
+
+SHA
+
+```{r}
+# SHA imputation for Pattern C, Sensor 4 dir_a scenario 2
+
+library(dplyr)
+library(readr)
+library(lubridate)
+
+set.seed(42)
+
+# Read data
+groundtruth <- read_csv("MICE_wide_3jamnew.csv", show_col_types = FALSE)
+missing_df  <- read_csv("traffic_pattern_c_wide_3jamnew.csv", show_col_types = FALSE)
+
+#Time Formating
+prep_time <- function(dat) {
+  temp_time <- parse_date_time(
+  dat$Timestamp,
+  orders = c("dmy HM", "dmy HMS", "ymd HM", "ymd HMS"),
+  tz = "UTC"
+)
+
+
+  if (any(is.na(temp_time))) {
+    warning("Some timestamps could not be parsed. Check date format.")
+  }
+
+  dat %>%
+    mutate(
+      Timestamp = format(temp_time, "%Y-%m-%d %H:%M:%S"),
+      DayOfWeek = as.factor(as.numeric(format(temp_time, "%u")) - 1),
+      Hour = as.numeric(format(temp_time, "%H")),
+      Minute = as.numeric(format(temp_time, "%M"))
+    )
+}
+
+groundtruth <- prep_time(groundtruth)
+missing_df  <- prep_time(missing_df)
+
+# Pattern C affects Sensor 4 dir_a only
+target_cols <- c("Vol_S4_dir_a", "Spd_S4_dir_a")
+
+cat("Target columns:", length(target_cols), "\n")
+cat("Total missing cells:", sum(is.na(missing_df[target_cols])), "\n")
+
+# SHA function
+sha_impute <- function(df, col) {
+  
+  s1 <- df %>%
+    group_by(DayOfWeek, Hour, Minute) %>%
+    summarise(v1 = mean(.data[[col]], na.rm = TRUE), .groups = "drop")
+  
+  s2 <- df %>%
+    group_by(Hour, Minute) %>%
+    summarise(v2 = mean(.data[[col]], na.rm = TRUE), .groups = "drop")
+  
+  s3 <- df %>%
+    group_by(DayOfWeek, Hour) %>%
+    summarise(v3 = mean(.data[[col]], na.rm = TRUE), .groups = "drop")
+  
+  overall <- mean(df[[col]], na.rm = TRUE)
+  
+  temp <- df %>%
+    left_join(s1, by = c("DayOfWeek", "Hour", "Minute")) %>%
+    left_join(s2, by = c("Hour", "Minute")) %>%
+    left_join(s3, by = c("DayOfWeek", "Hour"))
+  
+  x <- ifelse(
+    is.na(temp[[col]]),
+    coalesce(temp$v1, temp$v2, temp$v3, overall),
+    temp[[col]]
+  )
+  
+  if (grepl("^Vol_", col)) x <- round(pmax(x, 0))
+  if (grepl("^Spd_", col)) x <- round(pmax(x, 0), 1)
+  
+  df[[col]] <- x
+  df
+}
+
+# Apply SHA
+sha_imputed <- missing_df
+
+for (col in target_cols) {
+  if (any(is.na(sha_imputed[[col]]))) {
+    sha_imputed <- sha_impute(sha_imputed, col)
+  }
+}
+
+write_csv(sha_imputed, "traffic_wide_SHA_patternC3.csv")
+
+cat("Remaining missing cells:", sum(is.na(sha_imputed[target_cols])), "\n")
+
+# Error metrics and empirical error uncertainty
+rmse <- function(a, b) sqrt(mean((b - a)^2, na.rm = TRUE))
+mae  <- function(a, b) mean(abs(b - a), na.rm = TRUE)
+
+get_metrics <- function(col) {
+  
+  rows <- is.na(missing_df[[col]]) & !is.na(groundtruth[[col]])
+  
+  truth <- groundtruth[[col]][rows]
+  pred  <- sha_imputed[[col]][rows]
+  error <- pred - truth
+  
+  data.frame(
+    Variable = col,
+    Sensor_ID = 4,
+    Direction = "dir_a",
+    Type = ifelse(grepl("^Vol_", col), "Volume", "Speed"),
+    Missing_Cells = sum(rows),
+    RMSE = rmse(truth, pred),
+    MAE = mae(truth, pred),
+    Bias = mean(error, na.rm = TRUE),
+    Error_SD = sd(error, na.rm = TRUE),
+    Lower_95_Error = unname(quantile(error, 0.025, na.rm = TRUE)),
+    Upper_95_Error = unname(quantile(error, 0.975, na.rm = TRUE))
+  )
+}
+
+sha_metrics <- bind_rows(lapply(target_cols, get_metrics)) %>%
+  arrange(Type)
+
+write_csv(sha_metrics, "sha_metrics_patternC3.csv")
+print(sha_metrics)
+
+
+# Total Miles Travelled
+vol_cols <- grep("^Vol_", names(sha_imputed), value = TRUE)
+
+link_miles <- rep(5, length(vol_cols))
+names(link_miles) <- vol_cols
+
+tmt <- function(df, cols = vol_cols) {
+  sum(sapply(cols, function(col) {
+    sum(df[[col]] * link_miles[col], na.rm = TRUE)
+  }))
+}
+
+tmt_results <- data.frame(
+  Dataset = c("Groundtruth", "Missing", "SHA_Imputed"),
+  Total_Miles_Travelled = c(
+    tmt(groundtruth),
+    tmt(missing_df),
+    tmt(sha_imputed)
+  )
+) 
+  
+
+write_csv(tmt_results, "sha_tmt_results_patternC3.csv")
+print(tmt_results)
+```
+
+SHA with 10 other data
+
+```{r}
+library(dplyr)
+library(readr)
+library(lubridate)
+
+set.seed(42)
+
+TOTAL_RUNS <- 10
+
+# Time formatting function
+prep_time <- function(dat) {
+  temp_time <- parse_date_time(
+    dat$Timestamp,
+    orders = c("dmy HM", "dmy HMS", "ymd HM", "ymd HMS"),
+    tz = "UTC"
+  )
+  
+  if (any(is.na(temp_time))) {
+    warning("Some timestamps could not be parsed. Check date format.")
+  }
+  
+  dat %>%
+    mutate(
+      Timestamp = format(temp_time, "%Y-%m-%d %H:%M:%S"),
+      DayOfWeek = as.factor(as.numeric(format(temp_time, "%u")) - 1),
+      Hour = as.numeric(format(temp_time, "%H")),
+      Minute = as.numeric(format(temp_time, "%M"))
+    )
+}
+
+# SHA function
+sha_impute <- function(df, col) {
+  s1 <- df %>%
+    group_by(DayOfWeek, Hour, Minute) %>%
+    summarise(v1 = mean(.data[[col]], na.rm = TRUE), .groups = "drop")
+  
+  s2 <- df %>%
+    group_by(Hour, Minute) %>%
+    summarise(v2 = mean(.data[[col]], na.rm = TRUE), .groups = "drop")
+  
+  s3 <- df %>%
+    group_by(DayOfWeek, Hour) %>%
+    summarise(v3 = mean(.data[[col]], na.rm = TRUE), .groups = "drop")
+  
+  overall <- mean(df[[col]], na.rm = TRUE)
+  
+  temp <- df %>%
+    left_join(s1, by = c("DayOfWeek", "Hour", "Minute")) %>%
+    left_join(s2, by = c("Hour", "Minute")) %>%
+    left_join(s3, by = c("DayOfWeek", "Hour"))
+  
+  x <- ifelse(
+    is.na(temp[[col]]),
+    coalesce(temp$v1, temp$v2, temp$v3, overall),
+    temp[[col]]
+  )
+  
+  if (grepl("^Vol_", col)) x <- round(pmax(x, 0))
+  if (grepl("^Spd_", col)) x <- round(pmax(x, 0), 1)
+  
+  df[[col]] <- x
+  df
+}
+
+# Error metrics functions
+rmse <- function(a, b) sqrt(mean((b - a)^2, na.rm = TRUE))
+mae  <- function(a, b) mean(abs(b - a), na.rm = TRUE)
+
+# Lists to store aggregated results
+all_metrics <- list()
+all_tmt_results <- list()
+
+# Loop through all 10 datasets
+for (run in 1:TOTAL_RUNS) {
+  
+  
+  cat("STARTING SHA DATASET RUN:", run, "OUT OF", TOTAL_RUNS, "\n")
+  
+  
+  # Load specific run files 
+  truth_file <- paste0("MICE_wide_3jamnew_", run, ".csv")
+  miss_file  <- paste0("traffic_pattern_c_wide_3jamnew_", run, ".csv")
+  
+  groundtruth <- read_csv(truth_file, show_col_types = FALSE)
+  missing_df  <- read_csv(miss_file, show_col_types = FALSE)
+  
+  groundtruth <- prep_time(groundtruth)
+  missing_df  <- prep_time(missing_df)
+  
+  target_cols <- c("Vol_S4_dir_a", "Spd_S4_dir_a")
+  
+  # Apply SHA Imputation
+  sha_imputed <- missing_df
+  for (col in target_cols) {
+    if (any(is.na(sha_imputed[[col]]))) {
+      sha_imputed <- sha_impute(sha_imputed, col)
+    }
+  }
+  
+  # Save individual imputed dataset
+  write_csv(sha_imputed, paste0("traffic_wide_SHA_patternC3_run", run, ".csv"))
+  
+  # Calculate Metrics
+  get_metrics <- function(col) {
+    rows <- is.na(missing_df[[col]]) & !is.na(groundtruth[[col]])
+    
+    truth <- groundtruth[[col]][rows]
+    pred  <- sha_imputed[[col]][rows]
+    error <- pred - truth
+    
+    data.frame(
+      Dataset_Run = run,
+      Variable = col,
+      Sensor_ID = 4,
+      Direction = "dir_a",
+      Type = ifelse(grepl("^Vol_", col), "Volume", "Speed"),
+      Missing_Cells = sum(rows),
+      RMSE = rmse(truth, pred),
+      MAE = mae(truth, pred),
+      Bias = mean(error, na.rm = TRUE),
+      Error_SD = sd(error, na.rm = TRUE),
+      Lower_95_Error = unname(quantile(error, 0.025, na.rm = TRUE)),
+      Upper_95_Error = unname(quantile(error, 0.975, na.rm = TRUE))
+    )
+  }
+  
+  sha_metrics <- bind_rows(lapply(target_cols, get_metrics)) %>% arrange(Type)
+  all_metrics[[run]] <- sha_metrics
+  
+  # Calculate Total Miles Travelled (TMT)
+  vol_cols <- grep("^Vol_", names(sha_imputed), value = TRUE)
+  link_miles <- rep(5, length(vol_cols))
+  names(link_miles) <- vol_cols
+  
+  tmt <- function(df, cols = vol_cols) {
+    sum(sapply(cols, function(col) {
+      sum(df[[col]] * link_miles[col], na.rm = TRUE)
+    }))
+  }
+  
+  tmt_results <- data.frame(
+    Dataset_Run = run,
+    Dataset = c("Groundtruth", "Missing", "SHA_Imputed"),
+    Total_Miles_Travelled = c(
+      tmt(groundtruth),
+      tmt(missing_df),
+      tmt(sha_imputed)
+    )
+  ) 
+  
+  all_tmt_results[[run]] <- tmt_results
+}
+
+
+cat("ALL SHA RUNS COMPLETE. EXPORTING MASTER SUMMARY FILES.\n")
+
+
+# Combine lists and export master files
+master_sha_metrics <- bind_rows(all_metrics)
+write_csv(master_sha_metrics, "sha_MASTER_metrics_patternC3.csv")
+print(master_sha_metrics)
+print(master_sha_metrics %>% group_by(Variable) %>% summarise(Avg_RMSE = mean(RMSE), Avg_MAE = mean(MAE), Avg_Bias = mean(Bias)))
+
+
+master_sha_tmt <- bind_rows(all_tmt_results)
+write_csv(master_sha_tmt, "sha_MASTER_tmt_results_patternC3.csv")
+print(master_sha_tmt)
+```
+
+
+
+
+mice pmm 
+
+```{r}
+# MICE-PMM for Pattern C: Sensor 4 dir_a shock scenario 2
+
+library(mice)
+library(dplyr)
+library(readr)
+library(tibble)
+library(lubridate)
+
+set.seed(42)
+
+# Files
+truth <- read_csv("MICE_wide_3jamnew.csv", show_col_types = FALSE)
+miss  <- read_csv("traffic_pattern_c_wide_3jamnew.csv", show_col_types = FALSE)
+
+M <- 5
+MAXIT <- 5
+
+# Link lengths
+link_miles <- c(
+  S1 = 5, S2 = 5, S3 = 5, S4 = 5, S5 = 5,
+  S6 = 5, S7 = 5, S8 = 5, S9 = 5, S10 = 5
+)
+
+prep <- function(dat) {
+  temp_time <- parse_date_time(
+  dat$Timestamp,
+  orders = c("dmy HM", "dmy HMS", "ymd HM", "ymd HMS"),
+  tz = "UTC"
+)
+
+
+  if (any(is.na(temp_time))) {
+    warning("Some timestamps could not be parsed. Check date format.")
+  }
+
+  dat %>%
+    mutate(
+      Timestamp = format(temp_time, "%Y-%m-%d %H:%M:%S"),
+      Date = as.Date(temp_time),
+      DayOfWeek = as.factor(as.numeric(format(temp_time, "%u")) - 1),
+      Hour = as.numeric(format(temp_time, "%H")),
+      Minute = as.numeric(format(temp_time, "%M")),
+      TimeOfDay = Hour * 60 + Minute,
+      Time_sin = sin(2 * pi * TimeOfDay / 1440),
+      Time_cos = cos(2 * pi * TimeOfDay / 1440)
+
+    )
+}
+
+
+truth <- prep(truth)
+miss  <- prep(miss)
+
+original_cols <- names(miss)
+
+# Pattern C target variables
+target_vars <- c("Vol_S4_dir_a", "Spd_S4_dir_a")
+target_vars <- target_vars[target_vars %in% names(miss)]
+target_vars <- target_vars[sapply(miss[target_vars], function(x) any(is.na(x)))]
+
+if (length(target_vars) == 0) {
+  stop("No missing values found in Pattern C variables.")
+}
+
+cat("Variables to impute:", paste(target_vars, collapse = ", "), "\n")
+
+# Predictors: time plus nearby dir_a sensors only
+candidate_predictors <- c(
+  "DayOfWeek", "Time_sin", "Time_cos",
+  
+
+  "Vol_S1_dir_a", "Vol_S2_dir_a", "Vol_S3_dir_a", "Vol_S7_dir_a", "Vol_S5_dir_a", "Vol_S6_dir_a",
+  "Spd_S1_dir_a", "Spd_S2_dir_a", "Spd_S3_dir_a", "Spd_S7_dir_a", "Spd_S5_dir_a", "Spd_S6_dir_a"
+)
+
+predictors <- candidate_predictors[candidate_predictors %in% names(miss)]
+
+# Remove ID columns before MICE
+id_cols <- c("Timestamp", "Day_Name", "Date")
+id_cols <- id_cols[id_cols %in% names(miss)]
+
+mice_data <- miss %>%
+  select(-all_of(id_cols))
+
+# MICE setup
+ini <- mice(mice_data, maxit = 0, printFlag = FALSE)
+
+method <- ini$method
+method[] <- ""
+method[target_vars] <- "pmm"
+
+pred <- ini$predictorMatrix
+pred[,] <- 0
+
+for (v in target_vars) {
+  pred[v, predictors[predictors %in% colnames(pred)]] <- 1
+  pred[v, setdiff(target_vars, v)] <- 1
+  pred[v, v] <- 0
+}
+
+# Run MICE-PMM
+imp <- mice(
+  mice_data,
+  m = M,
+  maxit = MAXIT,
+  method = method,
+  predictorMatrix = pred,
+  donors = 3,
+  seed = 42,
+  printFlag = TRUE
+)
+
+plot(imp)
+
+# Completed datasets
+completed_list <- lapply(1:M, function(i) {
+  dat <- complete(imp, i)
+  dat <- bind_cols(miss[id_cols], dat)
+
+  dat$Timestamp <- miss$Timestamp
+
+  dat <- dat %>%
+    select(-TimeOfDay, -Time_sin, -Time_cos)
+
+  keep_cols <- original_cols[
+    !original_cols %in% c("TimeOfDay","Time_sin", "Time_cos")
+  ]
+
+  dat <- dat[, keep_cols]
+
+  vol_cols <- grep("^Vol_", names(dat), value = TRUE)
+  spd_cols <- grep("^Spd_", names(dat), value = TRUE)
+
+  dat[vol_cols] <- lapply(dat[vol_cols], function(x) round(pmax(x, 0)))
+  dat[spd_cols] <- lapply(dat[spd_cols], function(x) round(pmax(x, 0), 1))
+
+  dat
+})
+
+for (i in 1:M) {
+  clean_export <- completed_list[[i]] %>% select(-any_of("Date"))
+  write_csv(clean_export, paste0("patternC_MICE_PMM_imp3", i, ".csv"))
+}
+
+# Pooled completed dataset
+pooled <- completed_list[[1]]
+
+for (v in target_vars) {
+  pooled[[v]] <- rowMeans(sapply(completed_list, function(d) d[[v]]), na.rm = TRUE)
+
+  observed <- !is.na(miss[[v]])
+  pooled[[v]][observed] <- miss[[v]][observed]
+
+  if (grepl("^Vol_", v)) pooled[[v]] <- round(pmax(pooled[[v]], 0))
+  if (grepl("^Spd_", v)) pooled[[v]] <- round(pmax(pooled[[v]], 0), 1)
+}
+
+pooled_export <- pooled %>% select(-any_of("Date"))
+write_csv(pooled_export, "patternC_MICE_PMM_pooled3.csv")
+
+# Accuracy metrics
+calc_metrics <- function(true, pred) {
+  err <- pred - true
+
+  tibble(
+    RMSE = sqrt(mean(err^2, na.rm = TRUE)),
+    MAE = mean(abs(err), na.rm = TRUE),
+    Bias = mean(err, na.rm = TRUE)
+  )
+}
+
+metrics_by_var <- bind_rows(lapply(target_vars, function(v) {
+  rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+  calc_metrics(truth[[v]][rows], pooled[[v]][rows]) %>%
+    mutate(
+      Variable = v,
+      N_missing = sum(rows),
+      .before = 1
+    )
+}))
+
+overall_metrics <- function(cols, label) {
+  cols <- cols[cols %in% target_vars]
+
+  if (length(cols) == 0) {
+    return(tibble())
+  }
+
+  temp <- bind_rows(lapply(cols, function(v) {
+    rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+    tibble(True = truth[[v]][rows], Imputed = pooled[[v]][rows])
+  }))
+
+  calc_metrics(temp$True, temp$Imputed) %>%
+    mutate(
+      Variable = label,
+      N_missing = nrow(temp),
+      .before = 1
+    )
+}
+
+metrics_overall <- bind_rows(
+  overall_metrics(grep("^Vol_", target_vars, value = TRUE), "Overall_volume"),
+  overall_metrics(grep("^Spd_", target_vars, value = TRUE), "Overall_speed")
+)
+
+metrics <- bind_rows(metrics_by_var, metrics_overall)
+
+write_csv(metrics, "patternC_RMSE_MAE_Bias3.csv")
+print(metrics)
+
+# Comparison table
+comparison <- bind_rows(lapply(target_vars, function(v) {
+  rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+  tibble(
+    Timestamp = truth$Timestamp[rows],
+    Variable = v,
+    GroundTruth = truth[[v]][rows],
+    Missing = miss[[v]][rows],
+    Imputed = pooled[[v]][rows],
+    Error = pooled[[v]][rows] - truth[[v]][rows]
+  )
+}))
+
+write_csv(comparison, "patternC_groundtruth_missing_imputed3.csv")
+
+# Total Miles Travelled
+# The target is the realised TMT in the fixed 90-day synthetic dataset. Therefore, each completed dataset has an exact TMT total and U^(k) = 0.
+
+vol_cols <- grep("^Vol_", names(miss), value = TRUE)
+
+sensor_name <- function(x) {
+  paste0("S", sub(".*_S([0-9]+)_.*", "\\1", x))
+}
+
+calc_tmt <- function(dat, na.rm = FALSE) {
+  row_tmt <- rep(0, nrow(dat))
+
+  for (v in vol_cols) {
+    s <- sensor_name(v)
+    row_tmt <- row_tmt + dat[[v]] * link_miles[[s]]
+  }
+
+  if (!na.rm && any(is.na(row_tmt))) {
+    return(NA_real_)
+  }
+
+  sum(row_tmt, na.rm = na.rm)
+}
+
+tmt_truth <- calc_tmt(truth)
+
+# Descriptive value only. It is not used in Rubin's Rules.
+tmt_missing_observed <- calc_tmt(miss, na.rm = TRUE)
+
+# This cellwise pooled dataset is useful for reconstruction metrics.
+tmt_pooled <- calc_tmt(pooled)
+
+# One exact TMT total from each completed imputed dataset
+tmt_imp_results <- tibble(
+  Imputation = seq_len(M),
+  Estimate = vapply(completed_list, calc_tmt, numeric(1))
+)
+
+tmt_summary <- tibble(
+  Dataset = c("GroundTruth","Missing_observed_only","MICE_PMM_pooled",paste0("Imp", 1:M)),
+  TMT = c(
+    tmt_truth,
+    tmt_missing_observed,
+    tmt_pooled,
+    tmt_imp_results$Estimate
+  )
+)
+
+write_csv(tmt_summary, "patternC_TMT3.csv")
+print(tmt_summary)
+
+# Rubin's Rules for a fixed finite-population TMT target
+rubin_pool_fixed_tmt <- function(estimates, conf_level = 0.95) {
+
+  if (any(!is.finite(estimates))) {
+    stop("All completed datasets must have a finite TMT estimate.")
+  }
+
+  m <- length(estimates)
+
+  if (m < 2) {
+    stop("At least two imputations are required to estimate between-imputation variance.")
+  }
+
+  q_bar <- mean(estimates)
+  b <- var(estimates)
+
+  # Fixed 90-day ground-truth TMT:
+  # complete-data within-imputation variance is zero.
+  total_var <- (1 + 1 / m) * b
+  total_se <- sqrt(total_var)
+
+  # With U_bar = 0, the Rubin degrees of freedom reduce to m - 1.
+  df <- m - 1
+
+  alpha <- 1 - conf_level
+  crit <- qt(1 - alpha / 2, df = df)
+
+  tibble(
+    m = m,
+    Q_bar = q_bar,
+    B = b,
+    Total_variance = total_var,
+    Total_SE = total_se,
+    df = df,
+    CI_95_low = q_bar - crit * total_se,
+    CI_95_high = q_bar + crit * total_se
+  )
+}
+
+rubin_tmt <- rubin_pool_fixed_tmt(tmt_imp_results$Estimate)
+
+write_csv(rubin_tmt, "patternC_Rubin_TMT3.csv")
+print(rubin_tmt)
+```
+
+pmm with 10 other data
+
+```{r}
+# MICE-PMM for Pattern C:
+# Sensor 4, Direction A, volume and speed, 10 simulated datasets
+
+library(mice)
+library(dplyr)
+library(readr)
+library(tibble)
+library(lubridate)
+
+set.seed(42)
+
+# Global constants
+M <- 5
+MAXIT <- 5
+TOTAL_RUNS <- 10
+
+# Link lengths
+link_miles <- c(
+  S1 = 5, S2 = 5, S3 = 5, S4 = 5, S5 = 5,
+  S6 = 5, S7 = 5, S8 = 5, S9 = 5, S10 = 5
+)
+
+# Time-feature function
+prep <- function(dat) {
+
+  temp_time <- parse_date_time(
+    dat$Timestamp,
+    orders = c("dmy HM", "dmy HMS", "ymd HM", "ymd HMS"),
+    tz = "UTC"
+  )
+
+  if (any(is.na(temp_time))) {
+    warning("Some timestamps could not be parsed. Check date format.")
+  }
+
+  dat %>%
+    mutate(
+      Timestamp = format(temp_time, "%Y-%m-%d %H:%M:%S"),
+      Date = as.Date(temp_time),
+      DayOfWeek = as.factor(as.numeric(format(temp_time, "%u")) - 1),
+      Hour = as.numeric(format(temp_time, "%H")),
+      Minute = as.numeric(format(temp_time, "%M")),
+      TimeOfDay = Hour * 60 + Minute,
+      Time_sin = sin(2 * pi * TimeOfDay / 1440),
+      Time_cos = cos(2 * pi * TimeOfDay / 1440)
+    )
+}
+
+# Lists for results across all simulation runs
+all_metrics <- vector("list", TOTAL_RUNS)
+all_comparison <- vector("list", TOTAL_RUNS)
+all_tmt_summary <- vector("list", TOTAL_RUNS)
+all_rubin_tmt <- vector("list", TOTAL_RUNS)
+
+for (run in seq_len(TOTAL_RUNS)) {
+
+  cat("STARTING MICE-PMM PATTERN C DATASET RUN:",run,"OUT OF",TOTAL_RUNS,"\n")
+
+  # Load files for this simulation run
+  truth_file <- paste0("MICE_wide_3jamnew_", run, ".csv")
+
+  miss_file <- paste0("traffic_pattern_c_wide_3jamnew_",run,".csv" )
+
+  truth <- read_csv(truth_file,how_col_types = FALSE)
+
+  miss <- read_csv( miss_file, show_col_types = FALSE)
+
+  truth <- prep(truth)
+  miss <- prep(miss)
+
+  original_cols <- names(miss)
+
+  # Pattern C target variables:
+  # Sensor 4, Direction A
+  target_vars <- c( "Vol_S4_dir_a", "Spd_S4_dir_a"  )
+
+  target_vars <- target_vars[target_vars %in% names(miss)]
+
+  target_vars <- target_vars[sapply(miss[target_vars], function(x) any(is.na(x)))]
+
+  if (length(target_vars) == 0) {
+    stop(paste("No missing values found in Pattern C variables for run",run ))
+  }
+
+  # Pattern C predictors
+  candidate_predictors <- c(
+    "DayOfWeek","Time_sin","Time_cos",
+
+    "Vol_S1_dir_a","Vol_S2_dir_a","Vol_S3_dir_a","Vol_S5_dir_a","Vol_S6_dir_a","Vol_S7_dir_a",
+
+    "Spd_S1_dir_a","Spd_S2_dir_a","Spd_S3_dir_a","Spd_S5_dir_a","Spd_S6_dir_a","Spd_S7_dir_a"
+  )
+
+  predictors <- candidate_predictors[ candidate_predictors %in% names(miss) ]
+
+  # Remove identifier columns before MICE
+  id_cols <- c("Timestamp", "Day_Name", "Date")
+
+  id_cols <- id_cols[id_cols %in% names(miss)]
+
+  mice_data <- miss %>%
+    select(-all_of(id_cols))
+
+  # MICE setup
+  ini <- mice(
+    mice_data,
+    maxit = 0,
+    printFlag = FALSE
+  )
+
+  method <- ini$method
+  method[] <- ""
+  method[target_vars] <- "pmm"
+
+  pred <- ini$predictorMatrix
+  pred[,] <- 0
+
+  for (v in target_vars) {
+
+    pred[v, predictors[predictors %in% colnames(pred)]] <- 1
+
+    pred[v, setdiff(target_vars, v)] <- 1
+
+    pred[v, v] <- 0
+  }
+
+  # Run MICE-PMM
+  imp <- mice(
+    mice_data,
+    m = M,
+    maxit = MAXIT,
+    method = method,
+    predictorMatrix = pred,
+    donors = 3,
+    seed = 42 + run,
+    printFlag = FALSE
+  )
+
+  # Create completed datasets
+  completed_list <- lapply(seq_len(M), function(i) {
+
+    dat <- complete(imp, i)
+
+    dat <- bind_cols(miss[id_cols], dat)
+
+    dat$Timestamp <- miss$Timestamp
+
+    dat <- dat %>%
+      select(-any_of(c( "TimeOfDay","Time_sin","Time_cos")))
+
+    keep_cols <- original_cols[
+      !original_cols %in% c("TimeOfDay","Time_sin","Time_cos" )
+    ]
+
+    dat <- dat[, keep_cols]
+
+    vol_cols <- grep("^Vol_", names(dat), value = TRUE)
+    spd_cols <- grep("^Spd_", names(dat), value = TRUE)
+
+    dat[vol_cols] <- lapply(dat[vol_cols],function(x) round(pmax(x, 0)))
+
+    dat[spd_cols] <- lapply(dat[spd_cols],function(x) round(pmax(x, 0), 1) )
+
+    dat
+  })
+
+  # Export individual completed datasets
+  for (i in seq_len(M)) {
+
+    clean_export <- completed_list[[i]] %>%
+      select(-any_of("Date"))
+
+    write_csv( clean_export, paste0("patternC_MICE_PMM3_run",run,"_imp", i, ".csv") )
+  }
+
+  # Cellwise pooled dataset
+  # Used for RMSE, MAE, Bias, and reconstruction plots.
+  pooled <- completed_list[[1]]
+
+  for (v in target_vars) {
+
+    pooled[[v]] <- rowMeans(sapply(completed_list, function(d) d[[v]]),na.rm = TRUE)
+
+    observed <- !is.na(miss[[v]])
+
+    pooled[[v]][observed] <- miss[[v]][observed]
+
+    if (grepl("^Vol_", v)) {
+      pooled[[v]] <- round(pmax(pooled[[v]], 0))
+    }
+
+    if (grepl("^Spd_", v)) {
+      pooled[[v]] <- round(pmax(pooled[[v]], 0), 1)
+    }
+  }
+
+  pooled_export <- pooled %>%
+    select(-any_of("Date"))
+
+  write_csv(pooled_export,paste0( "patternC_MICE_PMM3_run",run,"_pooled.csv"))
+
+  # Accuracy metrics
+  calc_metrics <- function(true, pred) {
+
+    err <- pred - true
+
+    tibble(
+      RMSE = sqrt(mean(err^2, na.rm = TRUE)),
+      MAE = mean(abs(err), na.rm = TRUE),
+      Bias = mean(err, na.rm = TRUE)
+    )
+  }
+
+  metrics_by_var <- bind_rows(lapply(target_vars, function(v) {
+
+      rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+      calc_metrics(
+        truth[[v]][rows],
+        pooled[[v]][rows]
+      ) %>%
+        mutate(
+          Variable = v,
+          N_missing = sum(rows),
+          .before = 1
+        )
+    })
+  )
+
+  overall_metrics <- function(cols, label) {
+
+    cols <- cols[cols %in% target_vars]
+
+    if (length(cols) == 0) {
+      return(tibble())
+    }
+
+    temp <- bind_rows(lapply(cols, function(v) {
+
+        rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+        tibble(
+          True = truth[[v]][rows],
+          Imputed = pooled[[v]][rows]
+        )
+      })
+    )
+
+    calc_metrics(
+      temp$True,
+      temp$Imputed
+    ) %>%
+      mutate(
+        Variable = label,
+        N_missing = nrow(temp),
+        .before = 1
+      )
+  }
+
+  metrics_overall <- bind_rows(
+    overall_metrics(grep("^Vol_", target_vars, value = TRUE),"Overall_volume"),
+    overall_metrics( grep("^Spd_", target_vars, value = TRUE), "Overall_speed" )
+  )
+
+  metrics <- bind_rows(
+    metrics_by_var,
+    metrics_overall
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      .before = 1
+    )
+
+  all_metrics[[run]] <- metrics
+
+  # Missing-cell comparison table
+  comparison <- bind_rows(lapply(target_vars, function(v) {
+
+      rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+      tibble(
+        Timestamp = truth$Timestamp[rows],
+        Variable = v,
+        GroundTruth = truth[[v]][rows],
+        Missing = miss[[v]][rows],
+        Imputed = pooled[[v]][rows],
+        Error = pooled[[v]][rows] - truth[[v]][rows]
+      )
+    })
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      .before = 1
+    )
+
+  all_comparison[[run]] <- comparison
+
+  # Total Miles Travelled
+  # Each completed dataset produces one fixed realised TMT total.
+  vol_cols <- grep("^Vol_", names(miss), value = TRUE)
+
+  sensor_name <- function(x) {
+    paste0("S",sub(".*_S([0-9]+)_.*", "\\1", x))
+  }
+
+  calc_tmt <- function(dat, na.rm = FALSE) {
+
+    row_tmt <- rep(0, nrow(dat))
+
+    for (v in vol_cols) {
+
+      s <- sensor_name(v)
+
+      row_tmt <- row_tmt +dat[[v]] * link_miles[[s]]
+    }
+
+    if (!na.rm && any(is.na(row_tmt))) {
+      return(NA_real_)
+    }
+
+    sum(row_tmt, na.rm = na.rm)
+  }
+
+  # Ground-truth TMT for this simulation run
+  tmt_truth <- calc_tmt(truth)
+
+  # Descriptive value only.
+  # It is not used in Rubin's Rules.
+  tmt_missing_observed <- calc_tmt(miss,na.rm = TRUE)
+
+  # Cellwise pooled TMT.
+  # Retained only for descriptive comparison.
+  tmt_pooled <- calc_tmt(pooled)
+
+  # One complete-data TMT total per imputed dataset
+  tmt_imp_results <- tibble(
+    Imputation = seq_len(M),
+    Estimate = vapply(
+      completed_list,
+      calc_tmt,
+      numeric(1)
+    )
+  )
+
+  tmt_summary <- tibble(
+    Dataset = c("GroundTruth","Missing_observed_only","MICE_PMM_pooled",paste0("Imp", seq_len(M))),
+    TMT = c(
+      tmt_truth,
+      tmt_missing_observed,
+      tmt_pooled,
+      tmt_imp_results$Estimate
+    )
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      .before = 1
+    )
+
+  all_tmt_summary[[run]] <- tmt_summary
+
+  # Rubin's Rules for a fixed realised 90-day TMT target
+  # U_bar = 0.
+  # Therefore, T = (1 + 1/m)B.
+  rubin_pool_fixed_tmt <- function(estimates,conf_level = 0.95) {
+
+    if (length(estimates) < 2) {
+      stop("At least two completed datasets are required.")
+    }
+
+    if (any(!is.finite(estimates))) {
+      stop( "All completed datasets must have finite TMT estimates." )
+    }
+
+    m <- length(estimates)
+
+    q_bar <- mean(estimates)
+
+    b <- var(estimates)
+
+    total_variance <- (1 + 1 / m) * b
+
+    total_se <- sqrt(total_variance)
+
+    # With U_bar = 0, degrees of freedom equal m - 1.
+    df <- m - 1
+
+    alpha <- 1 - conf_level
+
+    crit <- qt(1 - alpha / 2,df = df)
+
+    tibble(
+      m = m,
+      Q_bar = q_bar,
+      B = b,
+      Total_variance = total_variance,
+      Total_SE = total_se,
+      df = df,
+      CI_95_low = q_bar - crit * total_se,
+      CI_95_high = q_bar + crit * total_se
+    )
+  }
+
+  rubin_tmt <- rubin_pool_fixed_tmt(
+    tmt_imp_results$Estimate
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      GroundTruth_TMT = tmt_truth,
+      Signed_error = Q_bar - tmt_truth,
+      Absolute_error = abs(Q_bar - tmt_truth),
+      Covers_groundtruth =
+        CI_95_low <= tmt_truth &
+        tmt_truth <= CI_95_high,
+      .before = 1
+    )
+
+  all_rubin_tmt[[run]] <- rubin_tmt
+}
+
+cat( "ALL RUNS COMPLETE. EXPORTING MASTER SUMMARY FILES.\n")
+
+# Master accuracy metrics
+master_metrics <- bind_rows(all_metrics)
+
+write_csv( master_metrics, "patternC_MICE_PMM_MASTER_RMSE_MAE_Bias3.csv")
+
+print(master_metrics)
+
+# Master missing-cell comparison table
+master_comparison <- bind_rows(all_comparison)
+
+write_csv(master_comparison,"patternC_MICE_PMM_MASTER_groundtruth_missing_imputed3.csv")
+
+# Master TMT summary
+master_tmt_summary <- bind_rows(all_tmt_summary)
+
+write_csv(master_tmt_summary,"patternC_MICE_PMM_MASTER_TMT3.csv")
+
+print(master_tmt_summary)
+
+# Master Rubin's Rules output
+master_rubin_tmt <- bind_rows(all_rubin_tmt)
+
+write_csv(master_rubin_tmt,"patternC_MICE_PMM_MASTER_Rubin_TMT3.csv")
+
+print(master_rubin_tmt)
+
+# Coverage across the 10 independent simulated datasets
+coverage_summary <- master_rubin_tmt %>%
+  summarise(
+    Total_runs = n(),
+    Intervals_containing_groundtruth =
+      sum(Covers_groundtruth),
+    Empirical_coverage =
+      mean(Covers_groundtruth),
+    Mean_absolute_TMT_error =
+      mean(Absolute_error),
+    Mean_total_SE =
+      mean(Total_SE),
+    Mean_interval_width =
+      mean(CI_95_high - CI_95_low)
+  )
+
+write_csv( coverage_summary, "patternC_MICE_PMM_coverage_summary3.csv")
+
+print(coverage_summary)
+
+# Average reconstruction metrics across the 10 datasets
+avg_metrics <- master_metrics %>%
+  group_by(Variable) %>%
+  summarise(
+    Avg_RMSE = mean(RMSE),
+    Avg_MAE = mean(MAE),
+    Avg_Bias = mean(Bias),
+    .groups = "drop"
+  )
+
+write_csv(avg_metrics,"patternC_MICE_PMM_average_metrics3.csv")
+
+print(avg_metrics)
+
+```
+
+mice rf 
+
+```{r}
+# MICE-RF for Pattern C: Sensor 4 dir_a shock scenario 2
+
+library(mice)
+library(dplyr)
+library(readr)
+library(tibble)
+library(lubridate)
+library(randomForest)
+
+set.seed(42)
+
+# Files
+truth <- read_csv("MICE_wide_3jamnew.csv", show_col_types = FALSE)
+miss  <- read_csv("traffic_pattern_c_wide_3jamnew.csv", show_col_types = FALSE)
+
+M <- 5
+MAXIT <- 5
+
+# Link lengths
+link_miles <- c(
+  S1 = 5, S2 = 5, S3 = 5, S4 = 5, S5 = 5,
+  S6 = 5, S7 = 5, S8 = 5, S9 = 5, S10 = 5
+)
+
+# Basic time features
+prep <- function(dat) {
+  temp_time <- parse_date_time(
+  dat$Timestamp,
+  orders = c("dmy HM", "dmy HMS", "ymd HM", "ymd HMS"),
+  tz = "UTC"
+)
+
+
+  if (any(is.na(temp_time))) {
+    warning("Some timestamps could not be parsed. Check date format.")
+  }
+
+  dat %>%
+    mutate(
+      Timestamp = format(temp_time, "%Y-%m-%d %H:%M:%S"),
+      Date = as.Date(temp_time),
+      DayOfWeek = as.factor(as.numeric(format(temp_time, "%u")) - 1),
+      Hour = as.numeric(format(temp_time, "%H")),
+      Minute = as.numeric(format(temp_time, "%M")),
+      TimeOfDay = Hour * 60 + Minute,
+      Time_sin = sin(2 * pi * TimeOfDay / 1440),
+      Time_cos = cos(2 * pi * TimeOfDay / 1440)
+
+    )
+}
+
+
+truth <- prep(truth)
+miss  <- prep(miss)
+
+original_cols <- names(miss)
+
+# Pattern C target variables
+target_vars <- c("Vol_S4_dir_a", "Spd_S4_dir_a")
+target_vars <- target_vars[target_vars %in% names(miss)]
+target_vars <- target_vars[sapply(miss[target_vars], function(x) any(is.na(x)))]
+
+if (length(target_vars) == 0) {
+  stop("No missing values found in Pattern C variables.")
+}
+
+cat("Variables to impute:", paste(target_vars, collapse = ", "), "\n")
+
+# Predictors: time plus nearby dir_a sensors only
+candidate_predictors <- c(
+  "DayOfWeek", "Time_sin", "Time_cos",
+  
+
+  "Vol_S1_dir_a", "Vol_S2_dir_a", "Vol_S3_dir_a", "Vol_S7_dir_a", "Vol_S5_dir_a", "Vol_S6_dir_a",
+  "Spd_S1_dir_a", "Spd_S2_dir_a", "Spd_S3_dir_a", "Spd_S7_dir_a", "Spd_S5_dir_a", "Spd_S6_dir_a"
+)
+
+predictors <- candidate_predictors[candidate_predictors %in% names(miss)]
+
+cat("Predictors used:", paste(predictors, collapse = ", "), "\n")
+
+# Remove ID columns before MICE
+id_cols <- c("Timestamp", "Day_Name")
+id_cols <- id_cols[id_cols %in% names(miss)]
+
+mice_data <- miss %>%
+  select(-all_of(id_cols))
+
+# MICE setup
+ini <- mice(mice_data, maxit = 0, printFlag = FALSE)
+
+method <- ini$method
+method[] <- ""
+method[target_vars] <- "rf"
+
+pred <- ini$predictorMatrix
+pred[,] <- 0
+
+for (v in target_vars) {
+  pred[v, predictors[predictors %in% colnames(pred)]] <- 1
+  pred[v, setdiff(target_vars, v)] <- 1
+  pred[v, v] <- 0
+}
+
+# Run MICE-RF
+
+imp <- mice(
+  mice_data,
+  m = M,
+  maxit = MAXIT,
+  method = method,
+  predictorMatrix = pred,
+  ntree = 50,
+  seed = 42,
+  printFlag = TRUE
+)
+
+plot(imp)
+
+#completed datasets
+completed_list <- lapply(1:M, function(i) {
+  dat <- complete(imp, i)
+  dat <- bind_cols(miss[id_cols], dat)
+
+  dat$Timestamp <- miss$Timestamp
+
+  dat <- dat %>%
+    select(-TimeOfDay, -Time_sin, -Time_cos)
+
+  keep_cols <- original_cols[
+    !original_cols %in% c("TimeOfDay", "Time_sin", "Time_cos")
+
+  ]
+
+  dat <- dat[, keep_cols]
+
+  
+  vol_cols <- grep("^Vol_", names(dat), value = TRUE)
+  spd_cols <- grep("^Spd_", names(dat), value = TRUE)
+
+  dat[vol_cols] <- lapply(dat[vol_cols], function(x) round(pmax(x, 0)))
+  dat[spd_cols] <- lapply(dat[spd_cols], function(x) round(pmax(x, 0), 1))
+
+  dat
+})
+
+for (i in 1:M) {
+  clean_export <- completed_list[[i]] %>% select(-any_of("Date"))
+  write_csv(clean_export, paste0("patternC_MICE_RF_imp3", i, ".csv"))
+}
+
+# Pooled completed dataset
+pooled <- completed_list[[1]]
+
+for (v in target_vars) {
+  pooled[[v]] <- rowMeans(sapply(completed_list, function(d) d[[v]]), na.rm = TRUE)
+
+  observed <- !is.na(miss[[v]])
+  pooled[[v]][observed] <- miss[[v]][observed]
+
+  if (grepl("^Vol_", v)) pooled[[v]] <- round(pmax(pooled[[v]], 0))
+  if (grepl("^Spd_", v)) pooled[[v]] <- round(pmax(pooled[[v]], 0), 1)
+}
+
+pooled_export <- pooled %>% select(-any_of("Date"))
+write_csv(pooled_export, "patternC_MICE_RF_pooled3.csv")
+
+# Accuracy metrics
+calc_metrics <- function(true, pred) {
+  err <- pred - true
+
+  tibble(
+    RMSE = sqrt(mean(err^2, na.rm = TRUE)),
+    MAE = mean(abs(err), na.rm = TRUE),
+    Bias = mean(err, na.rm = TRUE)
+  )
+}
+
+metrics_by_var <- bind_rows(lapply(target_vars, function(v) {
+  rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+  calc_metrics(truth[[v]][rows], pooled[[v]][rows]) %>%
+    mutate(
+      Variable = v,
+      N_missing = sum(rows),
+      .before = 1
+    )
+}))
+
+overall_metrics <- function(cols, label) {
+  cols <- cols[cols %in% target_vars]
+
+  if (length(cols) == 0) {
+    return(tibble())
+  }
+
+  temp <- bind_rows(lapply(cols, function(v) {
+    rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+    tibble(True = truth[[v]][rows], Imputed = pooled[[v]][rows])
+  }))
+
+  calc_metrics(temp$True, temp$Imputed) %>%
+    mutate(
+      Variable = label,
+      N_missing = nrow(temp),
+      .before = 1
+    )
+}
+
+metrics_overall <- bind_rows(
+  overall_metrics(grep("^Vol_", target_vars, value = TRUE), "Overall_volume"),
+  overall_metrics(grep("^Spd_", target_vars, value = TRUE), "Overall_speed")
+)
+
+metrics <- bind_rows(metrics_by_var, metrics_overall)
+
+write_csv(metrics, "patternC_MICE_RF_RMSE_MAE_Bias3.csv")
+print(metrics)
+
+# Comparison table
+comparison <- bind_rows(lapply(target_vars, function(v) {
+  rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+  tibble(
+    Timestamp = truth$Timestamp[rows],
+    Variable = v,
+    GroundTruth = truth[[v]][rows],
+    Missing = miss[[v]][rows],
+    Imputed = pooled[[v]][rows],
+    Error = pooled[[v]][rows] - truth[[v]][rows]
+  )
+}))
+
+write_csv(comparison, "patternC_MICE_RF_groundtruth_missing_imputed3.csv")
+
+# Total Miles Travelled
+# The target is the realised TMT in the fixed 90-day synthetic dataset. Therefore, each completed dataset has an exact TMT total and U^(k) = 0.
+
+vol_cols <- grep("^Vol_", names(miss), value = TRUE)
+
+sensor_name <- function(x) {
+  paste0("S", sub(".*_S([0-9]+)_.*", "\\1", x))
+}
+
+calc_tmt <- function(dat, na.rm = FALSE) {
+  row_tmt <- rep(0, nrow(dat))
+
+  for (v in vol_cols) {
+    s <- sensor_name(v)
+    row_tmt <- row_tmt + dat[[v]] * link_miles[[s]]
+  }
+
+  if (!na.rm && any(is.na(row_tmt))) {
+    return(NA_real_)
+  }
+
+  sum(row_tmt, na.rm = na.rm)
+}
+
+tmt_truth <- calc_tmt(truth)
+
+# Descriptive value only. It is not used in Rubin's Rules.
+tmt_missing_observed <- calc_tmt(miss, na.rm = TRUE)
+
+# This cellwise pooled dataset is useful for reconstruction metrics.
+tmt_pooled <- calc_tmt(pooled)
+
+# One exact TMT total from each completed imputed dataset
+tmt_imp_results <- tibble(
+  Imputation = seq_len(M),
+  Estimate = vapply(completed_list, calc_tmt, numeric(1))
+)
+
+tmt_summary <- tibble(
+  Dataset = c( "GroundTruth","Missing_observed_only","MICE_RF_pooled",paste0("Imp", 1:M)),
+  TMT = c(
+    tmt_truth,
+    tmt_missing_observed,
+    tmt_pooled,
+    tmt_imp_results$Estimate
+  )
+)
+
+write_csv(tmt_summary, "patternC_MICE_RF_TMT3.csv")
+print(tmt_summary)
+
+# Rubin's Rules for a fixed finite-population TMT target
+rubin_pool_fixed_tmt <- function(estimates, conf_level = 0.95) {
+
+  if (any(!is.finite(estimates))) {
+    stop("All completed datasets must have a finite TMT estimate.")
+  }
+
+  m <- length(estimates)
+
+  if (m < 2) {
+    stop("At least two imputations are required to estimate between-imputation variance.")
+  }
+
+  q_bar <- mean(estimates)
+  b <- var(estimates)
+
+  # Fixed 90-day ground-truth TMT:
+  # complete-data within-imputation variance is zero.
+  total_var <- (1 + 1 / m) * b
+  total_se <- sqrt(total_var)
+
+  # With U_bar = 0, the Rubin degrees of freedom reduce to m - 1.
+  df <- m - 1
+
+  alpha <- 1 - conf_level
+  crit <- qt(1 - alpha / 2, df = df)
+
+  tibble(
+    m = m,
+    Q_bar = q_bar,
+    B = b,
+    Total_variance = total_var,
+    Total_SE = total_se,
+    df = df,
+    CI_95_low = q_bar - crit * total_se,
+    CI_95_high = q_bar + crit * total_se
+  )
+}
+
+rubin_tmt <- rubin_pool_fixed_tmt(tmt_imp_results$Estimate)
+
+write_csv(rubin_tmt, "patternC_MICE_RF_Rubin_TMT3.csv")
+print(rubin_tmt)
+```
+
+mice rf with 10 other data
+
+```{r}
+# MICE-RF for Pattern C:
+# Sensor 4, Direction A, volume and speed, 10 simulated datasets
+
+library(mice)
+library(dplyr)
+library(readr)
+library(tibble)
+library(lubridate)
+library(randomForest)
+
+set.seed(42)
+
+# Global constants
+M <- 5
+MAXIT <- 5
+RF_NTREE <- 50
+TOTAL_RUNS <- 10
+
+# Link lengths
+link_miles <- c(
+  S1 = 5, S2 = 5, S3 = 5, S4 = 5, S5 = 5,
+  S6 = 5, S7 = 5, S8 = 5, S9 = 5, S10 = 5
+)
+
+# Time-feature function
+prep <- function(dat) {
+
+  temp_time <- parse_date_time(
+    dat$Timestamp,
+    orders = c("dmy HM", "dmy HMS", "ymd HM", "ymd HMS"),
+    tz = "UTC"
+  )
+
+  if (any(is.na(temp_time))) {
+    warning("Some timestamps could not be parsed. Check date format.")
+  }
+
+  dat %>%
+    mutate(
+      Timestamp = format(temp_time, "%Y-%m-%d %H:%M:%S"),
+      Date = as.Date(temp_time),
+      DayOfWeek = as.factor(as.numeric(format(temp_time, "%u")) - 1),
+      Hour = as.numeric(format(temp_time, "%H")),
+      Minute = as.numeric(format(temp_time, "%M")),
+      TimeOfDay = Hour * 60 + Minute,
+      Time_sin = sin(2 * pi * TimeOfDay / 1440),
+      Time_cos = cos(2 * pi * TimeOfDay / 1440)
+    )
+}
+
+# Lists for results across all simulation runs
+all_metrics <- vector("list", TOTAL_RUNS)
+all_comparison <- vector("list", TOTAL_RUNS)
+all_tmt_summary <- vector("list", TOTAL_RUNS)
+all_rubin_tmt <- vector("list", TOTAL_RUNS)
+
+for (run in seq_len(TOTAL_RUNS)) {
+
+  cat("STARTING MICE-RF PATTERN C DATASET RUN:",run,"OUT OF",TOTAL_RUNS,"\n")
+
+  # Load files for this simulation run
+  truth_file <- paste0("MICE_wide_3jamnew_", run, ".csv")
+
+  miss_file <- paste0("traffic_pattern_c_wide_3jamnew_",run,".csv")
+
+  truth <- read_csv(truth_file,show_col_types = FALSE)
+
+  miss <- read_csv(miss_file,show_col_types = FALSE)
+
+  truth <- prep(truth)
+  miss <- prep(miss)
+
+  original_cols <- names(miss)
+
+  # Pattern C target variables:
+  # Sensor 4, Direction A
+  target_vars <- c("Vol_S4_dir_a","Spd_S4_dir_a")
+
+  target_vars <- target_vars[target_vars %in% names(miss)]
+
+  target_vars <- target_vars[sapply(miss[target_vars], function(x) any(is.na(x)))]
+
+  if (length(target_vars) == 0) {
+    stop(paste("No missing values found in Pattern C variables for run",run))
+  }
+
+  # Pattern C predictors
+  candidate_predictors <- c(
+    "DayOfWeek", "Time_sin","Time_cos",
+
+    "Vol_S1_dir_a","Vol_S2_dir_a","Vol_S3_dir_a","Vol_S5_dir_a","Vol_S6_dir_a","Vol_S7_dir_a",
+
+    "Spd_S1_dir_a","Spd_S2_dir_a","Spd_S3_dir_a","Spd_S5_dir_a","Spd_S6_dir_a","Spd_S7_dir_a"
+  )
+
+  predictors <- candidate_predictors[candidate_predictors %in% names(miss)]
+
+  # Remove identifier columns before MICE
+  id_cols <- c("Timestamp", "Day_Name")
+
+  id_cols <- id_cols[id_cols %in% names(miss)]
+
+  mice_data <- miss %>%
+    select(-all_of(id_cols))
+
+  # MICE setup
+  ini <- mice(
+    mice_data,
+    maxit = 0,
+    printFlag = FALSE
+  )
+
+  method <- ini$method
+  method[] <- ""
+  method[target_vars] <- "rf"
+
+  pred <- ini$predictorMatrix
+  pred[,] <- 0
+
+  for (v in target_vars) {
+
+    pred[v, predictors[predictors %in% colnames(pred)]] <- 1
+
+    pred[v, setdiff(target_vars, v)] <- 1
+
+    pred[v, v] <- 0
+  }
+
+  # Run MICE-RF
+  imp <- mice(
+    mice_data,
+    m = M,
+    maxit = MAXIT,
+    method = method,
+    predictorMatrix = pred,
+    ntree = RF_NTREE,
+    seed = 42 + run,
+    printFlag = FALSE
+  )
+
+  # Create completed datasets
+  completed_list <- lapply(seq_len(M), function(i) {
+
+    dat <- complete(imp, i)
+
+    dat <- bind_cols(miss[id_cols], dat)
+
+    dat$Timestamp <- miss$Timestamp
+
+    dat <- dat %>%
+      select(-any_of(c( "TimeOfDay","Time_sin","Time_cos")))
+
+    keep_cols <- original_cols[
+      !original_cols %in% c( "TimeOfDay","Time_sin","Time_cos")
+    ]
+
+    dat <- dat[, keep_cols]
+
+    vol_cols <- grep("^Vol_", names(dat), value = TRUE)
+    spd_cols <- grep("^Spd_", names(dat), value = TRUE)
+
+    dat[vol_cols] <- lapply(dat[vol_cols],function(x) round(pmax(x, 0)))
+
+    dat[spd_cols] <- lapply(dat[spd_cols],function(x) round(pmax(x, 0), 1) )
+
+    dat
+  })
+
+  # Export individual completed datasets
+  for (i in seq_len(M)) {
+
+    clean_export <- completed_list[[i]] %>%
+      select(-any_of("Date"))
+
+    write_csv(clean_export,paste0("patternC_MICE_RF3_run",run,"_imp",  i,".csv"))
+  }
+
+  # Cellwise pooled dataset
+  # Used for RMSE, MAE, Bias, and reconstruction plots.
+  pooled <- completed_list[[1]]
+
+  for (v in target_vars) {
+
+    pooled[[v]] <- rowMeans(sapply(completed_list, function(d) d[[v]]),na.rm = TRUE)
+
+    observed <- !is.na(miss[[v]])
+
+    pooled[[v]][observed] <- miss[[v]][observed]
+
+    if (grepl("^Vol_", v)) {
+      pooled[[v]] <- round(pmax(pooled[[v]], 0))
+    }
+
+    if (grepl("^Spd_", v)) {
+      pooled[[v]] <- round(pmax(pooled[[v]], 0), 1)
+    }
+  }
+
+  pooled_export <- pooled %>%
+    select(-any_of("Date"))
+
+  write_csv(pooled_export,paste0( "patternC_MICE_RF3_run", run,"_pooled.csv"))
+
+  # Accuracy metrics
+  calc_metrics <- function(true, pred) {
+
+    err <- pred - true
+
+    tibble(
+      RMSE = sqrt(mean(err^2, na.rm = TRUE)),
+      MAE = mean(abs(err), na.rm = TRUE),
+      Bias = mean(err, na.rm = TRUE)
+    )
+  }
+
+  metrics_by_var <- bind_rows(lapply(target_vars, function(v) {
+
+      rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+      calc_metrics(
+        truth[[v]][rows],
+        pooled[[v]][rows]
+      ) %>%
+        mutate(
+          Variable = v,
+          N_missing = sum(rows),
+          .before = 1
+        )
+    })
+  )
+
+  overall_metrics <- function(cols, label) {
+
+    cols <- cols[cols %in% target_vars]
+
+    if (length(cols) == 0) {
+      return(tibble())
+    }
+
+    temp <- bind_rows(lapply(cols, function(v) {
+
+        rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+        tibble(
+          True = truth[[v]][rows],
+          Imputed = pooled[[v]][rows]
+        )
+      })
+    )
+
+    calc_metrics(
+      temp$True,
+      temp$Imputed
+    ) %>%
+      mutate(
+        Variable = label,
+        N_missing = nrow(temp),
+        .before = 1
+      )
+  }
+
+  metrics_overall <- bind_rows(
+    overall_metrics(grep("^Vol_", target_vars, value = TRUE),"Overall_volume" ),
+    overall_metrics(grep("^Spd_", target_vars, value = TRUE),"Overall_speed")
+  )
+
+  metrics <- bind_rows(
+    metrics_by_var,
+    metrics_overall
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      .before = 1
+    )
+
+  all_metrics[[run]] <- metrics
+
+  # Missing-cell comparison table
+  comparison <- bind_rows(lapply(target_vars, function(v) {
+
+      rows <- is.na(miss[[v]]) & !is.na(truth[[v]])
+
+      tibble(
+        Timestamp = truth$Timestamp[rows],
+        Variable = v,
+        GroundTruth = truth[[v]][rows],
+        Missing = miss[[v]][rows],
+        Imputed = pooled[[v]][rows],
+        Error = pooled[[v]][rows] - truth[[v]][rows]
+      )
+    })
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      .before = 1
+    )
+
+  all_comparison[[run]] <- comparison
+
+  # Total Miles Travelled
+  # Each completed dataset produces one fixed realised TMT total.
+  vol_cols <- grep("^Vol_", names(miss), value = TRUE)
+
+  sensor_name <- function(x) {
+    paste0( "S",sub(".*_S([0-9]+)_.*", "\\1", x))
+  }
+
+  calc_tmt <- function(dat, na.rm = FALSE) {
+
+    row_tmt <- rep(0, nrow(dat))
+
+    for (v in vol_cols) {
+
+      s <- sensor_name(v)
+
+      row_tmt <- row_tmt +dat[[v]] * link_miles[[s]]
+    }
+
+    if (!na.rm && any(is.na(row_tmt))) {
+      return(NA_real_)
+    }
+
+    sum(row_tmt, na.rm = na.rm)
+  }
+
+  # Ground-truth TMT for this simulation run
+  tmt_truth <- calc_tmt(truth)
+
+  # Descriptive value only.
+  # It is not used in Rubin's Rules.
+  tmt_missing_observed <- calc_tmt( miss, na.rm = TRUE)
+
+  # Cellwise pooled TMT.
+  # Retained only for descriptive comparison.
+  tmt_pooled <- calc_tmt(pooled)
+
+  # One complete-data TMT estimate per imputed dataset
+  tmt_imp_results <- tibble(
+    Imputation = seq_len(M),
+    Estimate = vapply(
+      completed_list,
+      calc_tmt,
+      numeric(1)
+    )
+  )
+
+  tmt_summary <- tibble(
+    Dataset = c( "GroundTruth", "Missing_observed_only", "MICE_RF_pooled", paste0("Imp", seq_len(M))),
+    TMT = c(
+      tmt_truth,
+      tmt_missing_observed,
+      tmt_pooled,
+      tmt_imp_results$Estimate
+    )
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      .before = 1
+    )
+
+  all_tmt_summary[[run]] <- tmt_summary
+
+  # Rubin's Rules for a fixed realised 90-day TMT target
+  # U_bar = 0.
+  # Therefore, T = (1 + 1/m)B.
+  rubin_pool_fixed_tmt <- function( estimates, conf_level = 0.95  ) {
+
+    if (length(estimates) < 2) {
+      stop( "At least two completed datasets are required.")
+    }
+
+    if (any(!is.finite(estimates))) {
+      stop("All completed datasets must have finite TMT estimates.")
+    }
+
+    m <- length(estimates)
+
+    q_bar <- mean(estimates)
+
+    b <- var(estimates)
+
+    total_variance <- (1 + 1 / m) * b
+
+    total_se <- sqrt(total_variance)
+
+    # With U_bar = 0, degrees of freedom equal m - 1.
+    df <- m - 1
+
+    alpha <- 1 - conf_level
+
+    crit <- qt(1 - alpha / 2,df = df )
+
+    tibble(
+      m = m,
+      Q_bar = q_bar,
+      B = b,
+      Total_variance = total_variance,
+      Total_SE = total_se,
+      df = df,
+      CI_95_low = q_bar - crit * total_se,
+      CI_95_high = q_bar + crit * total_se
+    )
+  }
+
+  rubin_tmt <- rubin_pool_fixed_tmt(
+    tmt_imp_results$Estimate
+  ) %>%
+    mutate(
+      Dataset_Run = run,
+      GroundTruth_TMT = tmt_truth,
+      Signed_error = Q_bar - tmt_truth,
+      Absolute_error = abs(Q_bar - tmt_truth),
+      Covers_groundtruth =
+        CI_95_low <= tmt_truth &
+        tmt_truth <= CI_95_high,
+      .before = 1
+    )
+
+  all_rubin_tmt[[run]] <- rubin_tmt
+}
+
+cat("ALL RUNS COMPLETE. EXPORTING MASTER SUMMARY FILES.\n")
+
+# Master accuracy metrics
+master_metrics <- bind_rows(all_metrics)
+
+write_csv( master_metrics,"patternC_MICE_RF_MASTER_RMSE_MAE_Bias3.csv")
+
+print(master_metrics)
+
+# Master missing-cell comparison table
+master_comparison <- bind_rows(all_comparison)
+
+write_csv(master_comparison,"patternC_MICE_RF_MASTER_groundtruth_missing_imputed3.csv")
+
+# Master TMT summary
+master_tmt_summary <- bind_rows(all_tmt_summary)
+
+write_csv(master_tmt_summary,"patternC_MICE_RF_MASTER_TMT3.csv")
+
+print(master_tmt_summary)
+
+# Master Rubin's Rules output
+master_rubin_tmt <- bind_rows(all_rubin_tmt)
+
+write_csv(master_rubin_tmt,"patternC_MICE_RF_MASTER_Rubin_TMT3.csv")
+
+print(master_rubin_tmt)
+
+# Coverage across the 10 independent simulated datasets
+coverage_summary <- master_rubin_tmt %>%
+  summarise(
+    Total_runs = n(),
+    Intervals_containing_groundtruth =
+      sum(Covers_groundtruth),
+    Empirical_coverage =
+      mean(Covers_groundtruth),
+    Mean_absolute_TMT_error =
+      mean(Absolute_error),
+    Mean_total_SE =
+      mean(Total_SE),
+    Mean_interval_width =
+      mean(CI_95_high - CI_95_low)
+  )
+
+write_csv( coverage_summary, "patternC_MICE_RF_coverage_summary3.csv")
+
+print(coverage_summary)
+
+# Average reconstruction metrics across the 10 datasets
+avg_metrics <- master_metrics %>%
+  group_by(Variable) %>%
+  summarise(
+    Avg_RMSE = mean(RMSE),
+    Avg_MAE = mean(MAE),
+    Avg_Bias = mean(Bias),
+    .groups = "drop"
+  )
+
+write_csv( avg_metrics, "patternC_MICE_RF_average_metrics3.csv")
+
+print(avg_metrics)
+```
+
