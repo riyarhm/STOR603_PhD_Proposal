@@ -25,10 +25,10 @@ StTOR603-PhD-Proposal/
 │   ├── generate_pattern_B.ipynb        # Injects continuous sensor hardware failure
 │   └── generate_pattern_C2.ipynb       # Injects missingness during a congestion shock (Case 1 and 2)
 ├── imputation_algorithms/
-│   ├── impute_pattern_A.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern A
-│   ├── impute_pattern_B.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern B
-│   ├── impute_pattern_C1.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C1
-│   └── impute_pattern_C2.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C2
+│   ├── Pattern_A.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern A
+│   ├── Pattern_B.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern B
+│   ├── Pattern_C1.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C1
+│   └── Pattern_C2.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C2
 ├── analysis/
 │   ├── analysis_pattern_A.ipynb        # Cell-level and TMT evaluation for Pattern A
 │   ├── analysis_pattern_B.ipynb        # Cell-level and TMT evaluation for Pattern B
