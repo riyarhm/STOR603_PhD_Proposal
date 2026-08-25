@@ -23,7 +23,7 @@ StTOR603-PhD-Proposal/
 │   ├── groundtruth_with_history.ipynb  # Generates 90-day base synthetic traffic (With historic shocks)
 │   ├── generate_pattern_A.ipynb        # Injects random scattered missingness
 │   ├── generate_pattern_B.ipynb        # Injects continuous sensor hardware failure
-│   └── generate_pattern_C2.ipynb       # Injects missingness during a congestion shock (Case 1 and 2)
+│   └── generate_pattern_C.ipynb       # Injects missingness during a congestion shock (Case 1 and 2)
 ├── imputation_algorithms/
 │   ├── Pattern_A.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern A
 │   ├── Pattern_B.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern B
@@ -35,8 +35,8 @@ StTOR603-PhD-Proposal/
 │   ├── analysis_pattern_C1.ipynb       # Cell-level and TMT evaluation for Pattern C1
 │   ├── analysis_pattern_C2.ipynb       # Cell-level and TMT evaluation for Pattern C2
 │   └── macro_analysis_sensitivity.ipynb# 10-seed sensitivity and interval coverage evaluation
-├── README.md
-└── LICENSE
+├── LICENSE 
+└── README.md
 ```
 
 #### Note on Code Architecture:
