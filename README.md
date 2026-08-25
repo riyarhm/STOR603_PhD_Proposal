@@ -38,6 +38,10 @@ StTOR603-PhD-Proposal/
 ├── README.md
 └── LICENSE
 ```
+
+#### Note on Code Architecture:
+To facilitate code review, please note that the core algorithmic implementations for the SHA, MICE-PMM, and MICE-RF methods are identical across all three experimental cases. While the individual execution scripts are extensive in length, the variations between them are limited exclusively to the specification of target variables and the selection of predictor variables required for each specific missingness pattern.
+
 ## Prerequisites
 
 This pipeline requires both Python and R. 
