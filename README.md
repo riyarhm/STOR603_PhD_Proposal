@@ -30,11 +30,11 @@ StTOR603-PhD-Proposal/
 │   ├── Pattern_C1.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C1
 │   └── Pattern_C2.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C2
 ├── analysis/
-│   ├── analysis_pattern_A.ipynb        # Cell-level and TMT evaluation for Pattern A
-│   ├── analysis_pattern_B.ipynb        # Cell-level and TMT evaluation for Pattern B
-│   ├── analysis_pattern_C1.ipynb       # Cell-level and TMT evaluation for Pattern C1
-│   ├── analysis_pattern_C2.ipynb       # Cell-level and TMT evaluation for Pattern C2
-│   └── macro_analysis_sensitivity.ipynb# 10-seed sensitivity and interval coverage evaluation
+│   ├── pattern_A_analysis.ipynb        # Cell-level and TMT evaluation for Pattern A
+│   ├── pattern_B_analysis.ipynb        # Cell-level and TMT evaluation for Pattern B
+│   ├── pattern_C1_analysis.ipynb       # Cell-level and TMT evaluation for Pattern C1
+│   ├── pattern_C2_analysis.ipynb       # Cell-level and TMT evaluation for Pattern C2
+│   └── macroanalysis_sensitivity.ipynb# 10-seed sensitivity and interval coverage evaluation
 ├── LICENSE 
 └── README.md
 ```
