@@ -7,7 +7,7 @@ This repository contains the data generation, imputation, and analysis code for 
 ## Overview
 Missing road sensor data degrades the reliability of traffic performance statistics, such as Total Miles Travelled (TMT). Traditional deterministic infilling methods, like Stratified Historical Average (SHA), fail to account for the uncertainty introduced by data reconstruction. 
 
-This project implements a simulation-based multiple-imputation framework to quantify missing-data uncertainty. It compares SHA against Multivariate Imputation by Chained Equations (MICE) using Predictive Mean Matching (MICE-PMM) and Random Forests (MICE-RF) across three controlled missingness scenarios:
+This project implements a simulation-based multiple imputation framework to quantify missing data uncertainty. It compares SHA against Multivariate Imputation by Chained Equations (MICE) using Predictive Mean Matching (MICE-PMM) and Random Forests (MICE-RF) across three controlled missingness scenarios:
 * **Pattern A:** Scattered random data loss (MCAR)
 * **Pattern B:** Sustained multivariate hardware outages (Block MAR)
 * **Pattern C:** Atypical non-recurring congestion shocks (with and without historical donors)
@@ -29,7 +29,7 @@ StTOR603-PhD-Proposal/
 │   ├── Pattern_B.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern B
 │   ├── Pattern_C1.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C1
 │   └── Pattern_C2.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C2
-├── analysis/
+├── performance_analysis/
 │   ├── pattern_A_analysis.ipynb        # Cell-level and TMT evaluation for Pattern A
 │   ├── pattern_B_analysis.ipynb        # Cell-level and TMT evaluation for Pattern B
 │   ├── pattern_C1_analysis.ipynb       # Cell-level and TMT evaluation for Pattern C1
@@ -50,6 +50,7 @@ This pipeline requires both Python and R.
 * `pandas`
 * `numpy`
 * `scipy`
+* `os`
 * `matplotlib` / `seaborn` (for visualizations)
 * `jupyter`
 
@@ -57,6 +58,9 @@ This pipeline requires both Python and R.
 * `mice`
 * `randomForest`
 * `dplyr`
+* `readr`
+* `lubridate`
+* `tibble`
 
 ## Execution Pipeline
 
