@@ -17,7 +17,7 @@ This project implements a simulation-based multiple imputation framework to quan
 The workflow is divided into three sequential stages:
 
 ```text
-StTOR603-PhD-Proposal/
+STOR603-PhD-Proposal/
 ├── data_generation/
 │   ├── groundtruth_no_history.ipynb    # Generates 90-day base synthetic traffic (No historic shocks)
 │   ├── groundtruth_with_history.ipynb  # Generates 90-day base synthetic traffic (With historic shocks)
