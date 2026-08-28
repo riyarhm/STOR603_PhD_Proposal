@@ -21,20 +21,20 @@ STOR603-PhD-Proposal/
 ├── data_generation/
 │   ├── groundtruth_no_history.ipynb    # Generates 90-day base synthetic traffic (No historic shocks)
 │   ├── groundtruth_with_history.ipynb  # Generates 90-day base synthetic traffic (With historic shocks)
-│   ├── generate_pattern_A.ipynb        # Injects random scattered missingness
-│   ├── generate_pattern_B.ipynb        # Injects continuous sensor hardware failure
-│   └── generate_pattern_C.ipynb       # Injects missingness during a congestion shock (Case 1 and 2)
+│   ├── pattern_A_generation.ipynb        # Injects random scattered missingness
+│   ├── pattern_B_generation.ipynb        # Injects continuous sensor hardware failure
+│   └── pattern_C_generation.ipynb       # Injects missingness during a congestion shock (Case 1 and 2)
 ├── imputation_algorithms/
 │   ├── Pattern_A.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern A
 │   ├── Pattern_B.Rmd            # Applies SHA, MICE-PMM, and MICE-RF to Pattern B
 │   ├── Pattern_C1.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C1
 │   └── Pattern_C2.Rmd           # Applies SHA, MICE-PMM, and MICE-RF to Pattern C2
 ├── performance_analysis/
+│   ├── macroanalysis_sensitivity.ipynb# 10-seed sensitivity and interval coverage evaluation
 │   ├── pattern_A_analysis.ipynb        # Cell-level and TMT evaluation for Pattern A
 │   ├── pattern_B_analysis.ipynb        # Cell-level and TMT evaluation for Pattern B
 │   ├── pattern_C1_analysis.ipynb       # Cell-level and TMT evaluation for Pattern C1
-│   ├── pattern_C2_analysis.ipynb       # Cell-level and TMT evaluation for Pattern C2
-│   └── macroanalysis_sensitivity.ipynb# 10-seed sensitivity and interval coverage evaluation
+│   └── pattern_C2_analysis.ipynb       # Cell-level and TMT evaluation for Pattern C2
 ├── LICENSE 
 └── README.md
 ```
