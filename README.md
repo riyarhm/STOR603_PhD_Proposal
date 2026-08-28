@@ -68,4 +68,4 @@ To reproduce the findings in the dissertation, run the files in the following or
 
 1. **Data Generation:** Run the notebooks in `data_generation/` to create the complete synthetic groundtruth datasets and inject the specific missingness patterns. *(Note: Data files are excluded from this repository).*
 2. **Imputation:** Run the R Markdown scripts in `imputation_algorithms/`. These scripts ingest the incomplete datasets, run the multiple imputation algorithms (m=5), and output the completed datasets.
-3. **Analysis:** Run the notebooks in `analysis/` to evaluate local cell-level reconstruction accuracy (RMSE, MAE) and apply Rubin's Rules to pool the network-level Total Miles Travelled (TMT) estimates.
+3. **Analysis:** Run the notebooks in `performance_analysis/` to evaluate local cell-level reconstruction accuracy (RMSE, MAE) and apply Rubin's Rules to pool the network-level Total Miles Travelled (TMT) estimates.
